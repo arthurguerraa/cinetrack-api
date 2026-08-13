@@ -6,11 +6,15 @@ const {
   listarMinhasListas,
   adicionarFilme,
   verFilmesDaLista,
+  editarLista,
+  deletarLista,
 } = require('../controllers/listaController');
 
 router.post('/', verificarToken, criarLista);
 router.get('/', verificarToken, listarMinhasListas);
 router.post('/filmes', verificarToken, adicionarFilme);
 router.get('/:id_lista/filmes', verificarToken, verFilmesDaLista);
+router.put('/:id_lista', verificarToken, editarLista);
+router.delete('/:id_lista', verificarToken, deletarLista);
 
 module.exports = router;

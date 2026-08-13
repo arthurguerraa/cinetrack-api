@@ -89,4 +89,35 @@ const buscarFilmes = async (req, res) => {
   }
 };
 
-module.exports = { buscarFilmes };
+// LISTAR FILMES SALVOS NO BANCO, COM FILTRO OPCIONAL DE GÊNERO
+const listarFilmes = async (req, res) => {
+  const { genero } = req.query; // ex: ?genero=Ação
+
+  try {
+    let query = `
+      SELECT DISTINCT f.*
+      FROM TB_Filme f
+    `;
+    const params = [];
+
+    if (genero) {
+      query += `
+        INNER JOIN TB_Filme_Genero fg ON f.id_filme = fg.id_filme
+        INNER JOIN TB_Genero g ON fg.id_genero = g.id_genero
+        WHERE g.nm_genero = ?
+      `;
+      params.push(genero);
+    }
+
+    query += ' ORDER BY f.nm_filme';
+
+    const [filmes] = await pool.query(query, params);
+
+    res.json(filmes);
+  } catch (err) {
+    console.error('Erro ao listar filmes:', err.message);
+    res.status(500).json({ error: 'Erro ao listar filmes.' });
+  }
+};
+
+module.exports = { buscarFilmes, listarFilmes };

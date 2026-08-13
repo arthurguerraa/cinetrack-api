@@ -132,4 +132,72 @@ const verFilmesDaLista = async (req, res) => {
   }
 };
 
-module.exports = { criarLista, listarMinhasListas, adicionarFilme, verFilmesDaLista };
+// EDITAR LISTA
+const editarLista = async (req, res) => {
+  const { id_lista } = req.params;
+  const { nm_lista, ds_lista, is_visibilidade } = req.body;
+  const id_usuario = req.usuario.id_usuario;
+
+  try {
+    // verifica se a lista existe e pertence ao usuário
+    const [lista] = await pool.query(
+      'SELECT * FROM TB_Lista WHERE id_lista = ? AND id_usuario = ?',
+      [id_lista, id_usuario]
+    );
+
+    if (lista.length === 0) {
+      return res.status(404).json({ error: 'Lista não encontrada.' });
+    }
+
+    await pool.query(
+      `UPDATE TB_Lista 
+       SET nm_lista = ?, ds_lista = ?, is_visibilidade = ?
+       WHERE id_lista = ?`,
+      [
+        nm_lista || lista[0].nm_lista,
+        ds_lista ?? lista[0].ds_lista,
+        is_visibilidade ?? lista[0].is_visibilidade,
+        id_lista,
+      ]
+    );
+
+    res.json({ message: 'Lista atualizada com sucesso!' });
+  } catch (err) {
+    console.error('Erro ao editar lista:', err.message);
+    res.status(500).json({ error: 'Erro ao editar lista.' });
+  }
+};
+
+// DELETAR LISTA
+const deletarLista = async (req, res) => {
+  const { id_lista } = req.params;
+  const id_usuario = req.usuario.id_usuario;
+
+  try {
+    const [lista] = await pool.query(
+      'SELECT * FROM TB_Lista WHERE id_lista = ? AND id_usuario = ?',
+      [id_lista, id_usuario]
+    );
+
+    if (lista.length === 0) {
+      return res.status(404).json({ error: 'Lista não encontrada.' });
+    }
+
+    // os registros em TB_Lista_Filme somem automaticamente por causa do ON DELETE CASCADE
+    await pool.query('DELETE FROM TB_Lista WHERE id_lista = ?', [id_lista]);
+
+    res.json({ message: 'Lista deletada com sucesso!' });
+  } catch (err) {
+    console.error('Erro ao deletar lista:', err.message);
+    res.status(500).json({ error: 'Erro ao deletar lista.' });
+  }
+};
+
+module.exports = {
+  criarLista,
+  listarMinhasListas,
+  adicionarFilme,
+  verFilmesDaLista,
+  editarLista,
+  deletarLista,
+};
