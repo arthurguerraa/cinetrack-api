@@ -19,5 +19,7 @@ const avaliacaoRoutes = require('./routes/avaliacaoRoutes');
 app.use('/avaliacoes', avaliacaoRoutes);
 const listaRoutes = require('./routes/listaRoutes');
 app.use('/listas', listaRoutes);
+const rankingRoutes = require('./routes/rankingRoutes');
+app.use('/ranking', rankingRoutes);
 
 module.exports = app;
