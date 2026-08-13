@@ -15,5 +15,7 @@ const authRoutes = require('./routes/authRoutes');
 app.use('/auth', authRoutes);
 const filmeRoutes = require('./routes/filmeRoutes');
 app.use('/filmes', filmeRoutes);
+const avaliacaoRoutes = require('./routes/avaliacaoRoutes');
+app.use('/avaliacoes', avaliacaoRoutes);
 
 module.exports = app;
