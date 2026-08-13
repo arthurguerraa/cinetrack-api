@@ -20,15 +20,17 @@ const buscarFilmes = async (req, res) => {
 
     const filmesTMDB = resposta.data.results;
 
-    // 2. salva cada filme no banco (se ainda não existir)
+    // 2. salva cada filme no banco (se ainda não existir) e vincula os gêneros
     for (const filme of filmesTMDB) {
       const [existe] = await pool.query(
         'SELECT id_filme FROM TB_Filme WHERE nm_filme = ? AND dt_lancamento = ?',
         [filme.title, filme.release_date ? filme.release_date.slice(0, 4) : null]
       );
 
+      let idFilme;
+
       if (existe.length === 0) {
-        await pool.query(
+        const [resultado] = await pool.query(
           `INSERT INTO TB_Filme (nm_filme, ds_sinopse, dt_lancamento, nr_nota_media, ds_poster)
            VALUES (?, ?, ?, ?, ?)`,
           [
@@ -39,6 +41,35 @@ const buscarFilmes = async (req, res) => {
             filme.poster_path ? `https://image.tmdb.org/t/p/w500${filme.poster_path}` : null,
           ]
         );
+        idFilme = resultado.insertId;
+      } else {
+        idFilme = existe[0].id_filme;
+      }
+
+      // vincula os gêneros do filme (usa o genre_ids que o TMDB retorna)
+      if (filme.genre_ids && filme.genre_ids.length > 0) {
+        for (const idTmdb of filme.genre_ids) {
+          const [genero] = await pool.query(
+            'SELECT id_genero FROM TB_Genero WHERE id_tmdb = ?',
+            [idTmdb]
+          );
+
+          if (genero.length > 0) {
+            const idGenero = genero[0].id_genero;
+
+            const [jaVinculado] = await pool.query(
+              'SELECT * FROM TB_Filme_Genero WHERE id_filme = ? AND id_genero = ?',
+              [idFilme, idGenero]
+            );
+
+            if (jaVinculado.length === 0) {
+              await pool.query(
+                'INSERT INTO TB_Filme_Genero (id_filme, id_genero) VALUES (?, ?)',
+                [idFilme, idGenero]
+              );
+            }
+          }
+        }
       }
     }
 

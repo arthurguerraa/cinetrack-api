@@ -22,6 +22,8 @@ const listaRoutes = require('./routes/listaRoutes');
 app.use('/listas', listaRoutes);
 const rankingRoutes = require('./routes/rankingRoutes');
 app.use('/ranking', rankingRoutes);
+const generoRoutes = require('./routes/generoRoutes');
+app.use('/generos', generoRoutes);
 app.use(tratarErros); // sempre por último
 
 
