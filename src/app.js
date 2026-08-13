@@ -11,6 +11,7 @@ app.get('/', (req, res) => {
   res.json({ message: 'CineTrack API rodando!' });
 });
 
+const tratarErros = require('./middlewares/errorMiddleware');
 const authRoutes = require('./routes/authRoutes');
 app.use('/auth', authRoutes);
 const filmeRoutes = require('./routes/filmeRoutes');
@@ -21,5 +22,7 @@ const listaRoutes = require('./routes/listaRoutes');
 app.use('/listas', listaRoutes);
 const rankingRoutes = require('./routes/rankingRoutes');
 app.use('/ranking', rankingRoutes);
+app.use(tratarErros); // sempre por último
+
 
 module.exports = app;
