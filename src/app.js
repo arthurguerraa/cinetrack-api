@@ -13,5 +13,7 @@ app.get('/', (req, res) => {
 
 const authRoutes = require('./routes/authRoutes');
 app.use('/auth', authRoutes);
+const filmeRoutes = require('./routes/filmeRoutes');
+app.use('/filmes', filmeRoutes);
 
 module.exports = app;
