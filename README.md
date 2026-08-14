@@ -43,7 +43,7 @@ src/
 
 ```bash
 # clone o repositório
-git clone <url-do-repositorio>
+git clone <https://github.com/arthurguerraa/cinetrack-api>
 cd cinetrack-api
 
 # instale as dependências
