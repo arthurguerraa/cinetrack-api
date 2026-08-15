@@ -20,7 +20,10 @@ const buscarFilmes = async (req, res) => {
 
     const filmesTMDB = resposta.data.results;
 
-    // 2. salva cada filme no banco (se ainda não existir) e vincula os gêneros
+    // 2. salva cada filme no banco (se ainda não existir), vincula gêneros
+    //    e guarda o id_filme de cada um numa lista paralela pra devolver na resposta
+    const idsFilmes = [];
+
     for (const filme of filmesTMDB) {
       const [existe] = await pool.query(
         'SELECT id_filme FROM TB_Filme WHERE nm_filme = ? AND dt_lancamento = ?',
@@ -45,6 +48,8 @@ const buscarFilmes = async (req, res) => {
       } else {
         idFilme = existe[0].id_filme;
       }
+
+      idsFilmes.push(idFilme);
 
       // vincula os gêneros do filme (usa o genre_ids que o TMDB retorna)
       if (filme.genre_ids && filme.genre_ids.length > 0) {
@@ -73,8 +78,9 @@ const buscarFilmes = async (req, res) => {
       }
     }
 
-    // 3. retorna os filmes formatados pro frontend
-    const filmesFormatados = filmesTMDB.map(filme => ({
+    // 3. retorna os filmes formatados pro frontend, agora incluindo id_filme
+    const filmesFormatados = filmesTMDB.map((filme, index) => ({
+      id_filme: idsFilmes[index],
       titulo: filme.title,
       sinopse: filme.overview,
       ano: filme.release_date ? filme.release_date.slice(0, 4) : null,
@@ -91,7 +97,7 @@ const buscarFilmes = async (req, res) => {
 
 // LISTAR FILMES SALVOS NO BANCO, COM FILTRO OPCIONAL DE GÊNERO
 const listarFilmes = async (req, res) => {
-  const { genero } = req.query; // ex: ?genero=Ação
+  const { genero } = req.query;
 
   try {
     let query = `
