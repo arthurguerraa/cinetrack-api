@@ -1,6 +1,8 @@
 const pool = require('../config/database');
 const axios = require('axios');
 
+const POSTER_PADRAO = 'https://via.placeholder.com/500x750/1C1C1C/8C8C8C?text=Sem+poster';
+
 /**
  * Consulta o TMDB numa língua específica.
  * Função auxiliar usada pelo fallback de idioma em buscarFilmes.
@@ -17,97 +19,110 @@ async function buscarNoTMDB(termo, idioma) {
   return resposta.data.results;
 }
 
+/**
+ * Salva um único filme no banco (ou recupera o id se já existir) e vincula
+ * seus gêneros. Isolado numa função própria para poder envolver cada filme
+ * em seu próprio try/catch no loop principal — um registro problemático
+ * não derruba a busca inteira.
+ */
+async function salvarFilme(filme) {
+  // valores padrão para campos que o TMDB não garante preenchidos —
+  // preferimos mostrar o filme com uma lacuna a escondê-lo da busca
+  const titulo = filme.title;
+  const sinopse = filme.overview || 'Sinopse não disponível.';
+  const ano = filme.release_date ? filme.release_date.slice(0, 4) : null;
+  const nota = filme.vote_average || 0;
+  const poster = filme.poster_path
+    ? `https://image.tmdb.org/t/p/w500${filme.poster_path}`
+    : POSTER_PADRAO;
+
+  // título e ano são os únicos campos realmente essenciais —
+  // sem eles o filme não tem como ser exibido nem identificado de forma única
+  if (!titulo || !ano) {
+    throw new Error(`Filme sem título ou ano de lançamento: "${titulo || 'desconhecido'}"`);
+  }
+
+  const [existe] = await pool.query(
+    'SELECT id_filme FROM TB_Filme WHERE nm_filme = ? AND dt_lancamento = ?',
+    [titulo, ano]
+  );
+
+  let idFilme;
+
+  if (existe.length === 0) {
+    const [resultado] = await pool.query(
+      `INSERT INTO TB_Filme (nm_filme, ds_sinopse, dt_lancamento, nr_nota_media, ds_poster)
+       VALUES (?, ?, ?, ?, ?)`,
+      [titulo, sinopse, ano, nota, poster]
+    );
+    idFilme = resultado.insertId;
+  } else {
+    idFilme = existe[0].id_filme;
+  }
+
+  // vincula os gêneros do filme (usa o genre_ids que o TMDB retorna)
+  if (filme.genre_ids && filme.genre_ids.length > 0) {
+    for (const idTmdb of filme.genre_ids) {
+      const [genero] = await pool.query(
+        'SELECT id_genero FROM TB_Genero WHERE id_tmdb = ?',
+        [idTmdb]
+      );
+
+      if (genero.length > 0) {
+        const idGenero = genero[0].id_genero;
+
+        const [jaVinculado] = await pool.query(
+          'SELECT * FROM TB_Filme_Genero WHERE id_filme = ? AND id_genero = ?',
+          [idFilme, idGenero]
+        );
+
+        if (jaVinculado.length === 0) {
+          await pool.query(
+            'INSERT INTO TB_Filme_Genero (id_filme, id_genero) VALUES (?, ?)',
+            [idFilme, idGenero]
+          );
+        }
+      }
+    }
+  }
+
+  return {
+    id_filme: idFilme,
+    titulo,
+    sinopse,
+    ano,
+    nota,
+    poster,
+  };
+}
+
 const buscarFilmes = async (req, res) => {
-  const { q } = req.query; // termo de busca, ex: ?q=batman
+  const { q } = req.query;
 
   if (!q) {
     return res.status(400).json({ error: 'Informe um termo de busca.' });
   }
 
   try {
-    // 1. busca primeiro em português — é a língua padrão do projeto
     let filmesTMDB = await buscarNoTMDB(q, 'pt-BR');
 
-    // 2. se não encontrou nada, tenta de novo em inglês antes de desistir
     if (filmesTMDB.length === 0) {
       filmesTMDB = await buscarNoTMDB(q, 'en-US');
     }
 
-    // 3. filtra resultados incompletos — o TMDB às vezes retorna itens sem
-    //    data de lançamento ou sem poster (registros incompletos, filmes ainda
-    //    não confirmados), e nossa tabela exige essas colunas. Melhor não
-    //    mostrar do que quebrar.
-    filmesTMDB = filmesTMDB.filter((filme) => filme.title && filme.release_date && filme.poster_path);
-
-    // 4. salva cada filme no banco (se ainda não existir), vincula gêneros
-    //    e guarda o id_filme de cada um numa lista paralela pra devolver na resposta
-    const idsFilmes = [];
+    // processa cada filme isoladamente — se um registro tiver algum problema
+    // inesperado (campo que ainda não previmos), ele é ignorado e registrado
+    // no console, mas não derruba a resposta inteira
+    const filmesFormatados = [];
 
     for (const filme of filmesTMDB) {
-      const anoLancamento = filme.release_date.slice(0, 4);
-
-      const [existe] = await pool.query(
-        'SELECT id_filme FROM TB_Filme WHERE nm_filme = ? AND dt_lancamento = ?',
-        [filme.title, anoLancamento]
-      );
-
-      let idFilme;
-
-      if (existe.length === 0) {
-        const [resultado] = await pool.query(
-          `INSERT INTO TB_Filme (nm_filme, ds_sinopse, dt_lancamento, nr_nota_media, ds_poster)
-           VALUES (?, ?, ?, ?, ?)`,
-          [
-            filme.title,
-            filme.overview || 'Sinopse não disponível.',
-            anoLancamento,
-            filme.vote_average || 0,
-            filme.poster_path ? `https://image.tmdb.org/t/p/w500${filme.poster_path}` : null,
-          ]
-        );
-        idFilme = resultado.insertId;
-      } else {
-        idFilme = existe[0].id_filme;
-      }
-
-      idsFilmes.push(idFilme);
-
-      // vincula os gêneros do filme (usa o genre_ids que o TMDB retorna)
-      if (filme.genre_ids && filme.genre_ids.length > 0) {
-        for (const idTmdb of filme.genre_ids) {
-          const [genero] = await pool.query(
-            'SELECT id_genero FROM TB_Genero WHERE id_tmdb = ?',
-            [idTmdb]
-          );
-
-          if (genero.length > 0) {
-            const idGenero = genero[0].id_genero;
-
-            const [jaVinculado] = await pool.query(
-              'SELECT * FROM TB_Filme_Genero WHERE id_filme = ? AND id_genero = ?',
-              [idFilme, idGenero]
-            );
-
-            if (jaVinculado.length === 0) {
-              await pool.query(
-                'INSERT INTO TB_Filme_Genero (id_filme, id_genero) VALUES (?, ?)',
-                [idFilme, idGenero]
-              );
-            }
-          }
-        }
+      try {
+        const filmeSalvo = await salvarFilme(filme);
+        filmesFormatados.push(filmeSalvo);
+      } catch (erroFilme) {
+        console.warn(`Filme ignorado na busca "${q}":`, erroFilme.message);
       }
     }
-
-    // 5. retorna os filmes formatados pro frontend, agora incluindo id_filme
-    const filmesFormatados = filmesTMDB.map((filme, index) => ({
-      id_filme: idsFilmes[index],
-      titulo: filme.title,
-      sinopse: filme.overview,
-      ano: filme.release_date.slice(0, 4),
-      nota: filme.vote_average,
-      poster: filme.poster_path ? `https://image.tmdb.org/t/p/w500${filme.poster_path}` : null,
-    }));
 
     res.json(filmesFormatados);
   } catch (err) {
