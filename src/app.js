@@ -1,20 +1,30 @@
 const express = require('express');
-const cors = require('cors'); // Importado aqui no topo
+const cors = require('cors');
 require('dotenv').config();
 require('./config/database');
 
 const app = express();
 
+// ----------------------------------------
 // Configurações do Express
-app.use(cors()); // Libera o CORS para o seu frontend funcionar!
+// ----------------------------------------
+
+// CORS aberto para qualquer origem — correto para desenvolvimento local,
+// já que o frontend é testado via file:// (origem "null") e não tem porta fixa.
+// Quando for para produção, restrinja para o domínio real do frontend, ex:
+// app.use(cors({ origin: 'https://seu-dominio.com' }));
+app.use(cors());
+
 app.use(express.json());
 
-// Teste se o servidor está rodando
+// teste se o servidor está rodando
 app.get('/', (req, res) => {
   res.json({ message: 'CineTrack API rodando!' });
 });
 
-// Rotas do Sistema
+// ----------------------------------------
+// Rotas do sistema
+// ----------------------------------------
 const authRoutes = require('./routes/authRoutes');
 app.use('/auth', authRoutes);
 
@@ -33,14 +43,10 @@ app.use('/ranking', rankingRoutes);
 const generoRoutes = require('./routes/generoRoutes');
 app.use('/generos', generoRoutes);
 
-// Tratamento de erros (Sempre depois das rotas e antes do module.exports)
+// ----------------------------------------
+// Tratamento de erros — sempre depois das rotas
+// ----------------------------------------
 const tratarErros = require('./middlewares/errorMiddleware');
 app.use(tratarErros);
-
-// FAÇA O SERVIDOR RODAR NA PORTA 3000
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando com sucesso na porta ${PORT}!`);
-});
 
 module.exports = app;
