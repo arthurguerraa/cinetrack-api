@@ -1,6 +1,22 @@
 const pool = require('../config/database');
 const axios = require('axios');
 
+/**
+ * Consulta o TMDB numa língua específica.
+ * Função auxiliar usada pelo fallback de idioma em buscarFilmes.
+ */
+async function buscarNoTMDB(termo, idioma) {
+  const resposta = await axios.get('https://api.themoviedb.org/3/search/movie', {
+    params: {
+      api_key: process.env.TMDB_API_KEY,
+      query: termo,
+      language: idioma,
+      include_adult: false,
+    },
+  });
+  return resposta.data.results;
+}
+
 const buscarFilmes = async (req, res) => {
   const { q } = req.query; // termo de busca, ex: ?q=batman
 
@@ -9,25 +25,30 @@ const buscarFilmes = async (req, res) => {
   }
 
   try {
-    // 1. busca no TMDB
-    const resposta = await axios.get('https://api.themoviedb.org/3/search/movie', {
-      params: {
-        api_key: process.env.TMDB_API_KEY,
-        query: q,
-        language: 'pt-BR',
-      },
-    });
+    // 1. busca primeiro em português — é a língua padrão do projeto
+    let filmesTMDB = await buscarNoTMDB(q, 'pt-BR');
 
-    const filmesTMDB = resposta.data.results;
+    // 2. se não encontrou nada, tenta de novo em inglês antes de desistir
+    if (filmesTMDB.length === 0) {
+      filmesTMDB = await buscarNoTMDB(q, 'en-US');
+    }
 
-    // 2. salva cada filme no banco (se ainda não existir), vincula gêneros
+    // 3. filtra resultados incompletos — o TMDB às vezes retorna itens sem
+    //    data de lançamento ou sem poster (registros incompletos, filmes ainda
+    //    não confirmados), e nossa tabela exige essas colunas. Melhor não
+    //    mostrar do que quebrar.
+    filmesTMDB = filmesTMDB.filter((filme) => filme.title && filme.release_date && filme.poster_path);
+
+    // 4. salva cada filme no banco (se ainda não existir), vincula gêneros
     //    e guarda o id_filme de cada um numa lista paralela pra devolver na resposta
     const idsFilmes = [];
 
     for (const filme of filmesTMDB) {
+      const anoLancamento = filme.release_date.slice(0, 4);
+
       const [existe] = await pool.query(
         'SELECT id_filme FROM TB_Filme WHERE nm_filme = ? AND dt_lancamento = ?',
-        [filme.title, filme.release_date ? filme.release_date.slice(0, 4) : null]
+        [filme.title, anoLancamento]
       );
 
       let idFilme;
@@ -39,7 +60,7 @@ const buscarFilmes = async (req, res) => {
           [
             filme.title,
             filme.overview || 'Sinopse não disponível.',
-            filme.release_date ? filme.release_date.slice(0, 4) : null,
+            anoLancamento,
             filme.vote_average || 0,
             filme.poster_path ? `https://image.tmdb.org/t/p/w500${filme.poster_path}` : null,
           ]
@@ -78,12 +99,12 @@ const buscarFilmes = async (req, res) => {
       }
     }
 
-    // 3. retorna os filmes formatados pro frontend, agora incluindo id_filme
+    // 5. retorna os filmes formatados pro frontend, agora incluindo id_filme
     const filmesFormatados = filmesTMDB.map((filme, index) => ({
       id_filme: idsFilmes[index],
       titulo: filme.title,
       sinopse: filme.overview,
-      ano: filme.release_date ? filme.release_date.slice(0, 4) : null,
+      ano: filme.release_date.slice(0, 4),
       nota: filme.vote_average,
       poster: filme.poster_path ? `https://image.tmdb.org/t/p/w500${filme.poster_path}` : null,
     }));
