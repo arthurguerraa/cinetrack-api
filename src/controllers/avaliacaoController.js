@@ -1,8 +1,9 @@
 const pool = require('../config/database');
 
+// CRIAR AVALIAÇÃO
 const avaliarFilme = async (req, res) => {
   const { id_filme, nr_nota, ds_comentario } = req.body;
-  const id_usuario = req.usuario.id_usuario; // veio do token, via middleware
+  const id_usuario = req.usuario.id_usuario;
 
   if (!id_filme || !nr_nota) {
     return res.status(400).json({ error: 'Informe o filme e a nota.' });
@@ -13,7 +14,6 @@ const avaliarFilme = async (req, res) => {
   }
 
   try {
-    // verifica se o filme existe
     const [filme] = await pool.query(
       'SELECT id_filme FROM TB_Filme WHERE id_filme = ?',
       [id_filme]
@@ -23,7 +23,6 @@ const avaliarFilme = async (req, res) => {
       return res.status(404).json({ error: 'Filme não encontrado.' });
     }
 
-    // verifica se o usuário já avaliou esse filme
     const [avaliacaoExistente] = await pool.query(
       'SELECT id_avaliacao FROM TB_Avaliacao WHERE id_usuario = ? AND id_filme = ?',
       [id_usuario, id_filme]
@@ -33,7 +32,6 @@ const avaliarFilme = async (req, res) => {
       return res.status(409).json({ error: 'Você já avaliou esse filme.' });
     }
 
-    // insere a avaliação
     await pool.query(
       `INSERT INTO TB_Avaliacao (nr_nota, ds_comentario, id_usuario, id_filme)
        VALUES (?, ?, ?, ?)`,
@@ -44,6 +42,35 @@ const avaliarFilme = async (req, res) => {
   } catch (err) {
     console.error('Erro ao avaliar filme:', err.message);
     res.status(500).json({ error: 'Erro ao avaliar filme.' });
+  }
+};
+
+// LISTAR MINHAS AVALIAÇÕES (para a tela de perfil)
+const listarMinhasAvaliacoes = async (req, res) => {
+  const id_usuario = req.usuario.id_usuario;
+
+  try {
+    const [avaliacoes] = await pool.query(
+      `SELECT 
+         a.id_avaliacao,
+         a.nr_nota,
+         a.ds_comentario,
+         a.created_at,
+         f.id_filme,
+         f.nm_filme,
+         f.ds_poster,
+         f.dt_lancamento
+       FROM TB_Avaliacao a
+       INNER JOIN TB_Filme f ON a.id_filme = f.id_filme
+       WHERE a.id_usuario = ?
+       ORDER BY a.created_at DESC`,
+      [id_usuario]
+    );
+
+    res.json(avaliacoes);
+  } catch (err) {
+    console.error('Erro ao listar avaliações do usuário:', err.message);
+    res.status(500).json({ error: 'Erro ao listar suas avaliações.' });
   }
 };
 
@@ -109,4 +136,9 @@ const deletarAvaliacao = async (req, res) => {
   }
 };
 
-module.exports = { avaliarFilme, editarAvaliacao, deletarAvaliacao };
+module.exports = {
+  avaliarFilme,
+  listarMinhasAvaliacoes,
+  editarAvaliacao,
+  deletarAvaliacao,
+};

@@ -9,7 +9,7 @@ function gerarCodigo() {
 
 function gerarToken(usuario) {
   return jwt.sign(
-    { id_usuario: usuario.id_usuario, nm_usuario: usuario.nm_usuario },
+    { id_usuario: usuario.id_usuario, nm_usuario: usuario.nm_usuario, ds_email: usuario.ds_email },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
