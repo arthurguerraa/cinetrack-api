@@ -162,4 +162,4 @@ const listarFilmes = async (req, res) => {
   }
 };
 
-module.exports = { buscarFilmes, listarFilmes };
+module.exports = { buscarFilmes, listarFilmes, salvarFilme };
