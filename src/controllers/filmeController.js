@@ -132,18 +132,21 @@ const buscarFilmes = async (req, res) => {
 };
 
 // LISTAR FILMES SALVOS NO BANCO, COM FILTRO OPCIONAL DE GÊNERO
+// LISTAR FILMES SALVOS NO BANCO, COM FILTRO OPCIONAL DE GÊNERO E PAGINAÇÃO
 const listarFilmes = async (req, res) => {
   const { genero } = req.query;
 
+  const page = Math.max(parseInt(req.query.page) || 1, 1);
+  const limit = Math.min(parseInt(req.query.limit) || 20, 100); // nunca mais que 100 por página
+  const offset = (page - 1) * limit;
+
   try {
-    let query = `
-      SELECT DISTINCT f.*
-      FROM TB_Filme f
-    `;
+    // parte da query compartilhada entre a contagem total e a busca paginada
+    let baseQuery = 'FROM TB_Filme f';
     const params = [];
 
     if (genero) {
-      query += `
+      baseQuery += `
         INNER JOIN TB_Filme_Genero fg ON f.id_filme = fg.id_filme
         INNER JOIN TB_Genero g ON fg.id_genero = g.id_genero
         WHERE g.nm_genero = ?
@@ -151,11 +154,29 @@ const listarFilmes = async (req, res) => {
       params.push(genero);
     }
 
-    query += ' ORDER BY f.nm_filme';
+    // total de filmes que respeitam o filtro, para calcular quantas páginas existem
+    const [totalRows] = await pool.query(
+      `SELECT COUNT(DISTINCT f.id_filme) AS total ${baseQuery}`,
+      params
+    );
+    const total = totalRows[0].total;
 
-    const [filmes] = await pool.query(query, params);
+    const [filmes] = await pool.query(
+      `SELECT DISTINCT f.* ${baseQuery} ORDER BY f.nm_filme LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
 
-    res.json(filmes);
+    res.json({
+      data: filmes,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    });
   } catch (err) {
     console.error('Erro ao listar filmes:', err.message);
     res.status(500).json({ error: 'Erro ao listar filmes.' });
