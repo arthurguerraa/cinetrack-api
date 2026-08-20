@@ -2,32 +2,33 @@ const pool = require('../config/database');
 const axios = require('axios');
 
 const POSTER_PADRAO = 'https://via.placeholder.com/500x750/1C1C1C/8C8C8C?text=Sem+poster';
+const TMDB_API_URL = 'https://api.themoviedb.org/3';
 
 /**
- * Consulta o TMDB numa língua específica.
- * Função auxiliar usada pelo fallback de idioma em buscarFilmes.
+ * Consulta o TMDB numa língua/página específica.
+ * Retorna a resposta completa do TMDB (não só os resultados), porque
+ * precisamos dos campos de paginação (page, total_pages) para devolver
+ * ao frontend.
  */
-async function buscarNoTMDB(termo, idioma) {
-  const resposta = await axios.get('https://api.themoviedb.org/3/search/movie', {
+async function chamarTMDB(caminho, parametrosExtras = {}) {
+  const resposta = await axios.get(`${TMDB_API_URL}${caminho}`, {
     params: {
       api_key: process.env.TMDB_API_KEY,
-      query: termo,
-      language: idioma,
+      language: 'pt-BR',
       include_adult: false,
+      ...parametrosExtras,
     },
   });
-  return resposta.data.results;
+  return resposta.data;
 }
 
 /**
  * Salva um único filme no banco (ou recupera o id se já existir) e vincula
- * seus gêneros. Isolado numa função própria para poder envolver cada filme
- * em seu próprio try/catch no loop principal — um registro problemático
- * não derruba a busca inteira.
+ * seus gêneros. O banco funciona só como cache de apoio — nunca é a fonte
+ * de exibição da home, só o que garante que id_filme existe para permitir
+ * avaliações e listas.
  */
 async function salvarFilme(filme) {
-  // valores padrão para campos que o TMDB não garante preenchidos —
-  // preferimos mostrar o filme com uma lacuna a escondê-lo da busca
   const titulo = filme.title;
   const sinopse = filme.overview || 'Sinopse não disponível.';
   const ano = filme.release_date ? filme.release_date.slice(0, 4) : null;
@@ -36,8 +37,6 @@ async function salvarFilme(filme) {
     ? `https://image.tmdb.org/t/p/w500${filme.poster_path}`
     : POSTER_PADRAO;
 
-  // título e ano são os únicos campos realmente essenciais —
-  // sem eles o filme não tem como ser exibido nem identificado de forma única
   if (!titulo || !ano) {
     throw new Error(`Filme sem título ou ano de lançamento: "${titulo || 'desconhecido'}"`);
   }
@@ -60,7 +59,6 @@ async function salvarFilme(filme) {
     idFilme = existe[0].id_filme;
   }
 
-  // vincula os gêneros do filme (usa o genre_ids que o TMDB retorna)
   if (filme.genre_ids && filme.genre_ids.length > 0) {
     for (const idTmdb of filme.genre_ids) {
       const [genero] = await pool.query(
@@ -86,101 +84,123 @@ async function salvarFilme(filme) {
     }
   }
 
+  return { id_filme: idFilme, titulo, sinopse, ano, nota, poster };
+}
+
+/**
+ * Processa uma lista de filmes vinda do TMDB, salvando cada um isoladamente.
+ * Um filme com problema é ignorado sem derrubar os outros.
+ */
+async function processarLista(filmesTMDB) {
+  const resultado = [];
+  for (const filme of filmesTMDB) {
+    try {
+      resultado.push(await salvarFilme(filme));
+    } catch (erroFilme) {
+      console.warn('Filme ignorado:', erroFilme.message);
+    }
+  }
+  return resultado;
+}
+
+/**
+ * Monta a resposta padrão { data, pagination } a partir do retorno do TMDB,
+ * usado pelos três endpoints (populares, gênero, busca) para manter o
+ * mesmo formato que o frontend já espera.
+ */
+function formatarResposta(dadosTMDB, filmesSalvos) {
   return {
-    id_filme: idFilme,
-    titulo,
-    sinopse,
-    ano,
-    nota,
-    poster,
+    data: filmesSalvos,
+    pagination: {
+      page: dadosTMDB.page,
+      totalPages: Math.min(dadosTMDB.total_pages, 500), // limite do próprio TMDB
+      hasNext: dadosTMDB.page < Math.min(dadosTMDB.total_pages, 500),
+      hasPrev: dadosTMDB.page > 1,
+    },
   };
 }
 
+function obterPagina(req) {
+  const pagina = parseInt(req.query.page) || 1;
+  return Math.min(Math.max(pagina, 1), 500);
+}
+
+// ----------------------------------------
+// GET /filmes/populares — estado padrão da home, sem busca nem filtro
+// ----------------------------------------
+const listarPopulares = async (req, res) => {
+  const page = obterPagina(req);
+
+  try {
+    const dadosTMDB = await chamarTMDB('/trending/movie/week', { page });
+    const filmesSalvos = await processarLista(dadosTMDB.results);
+    res.json(formatarResposta(dadosTMDB, filmesSalvos));
+  } catch (err) {
+    console.error('Erro ao listar populares:', err.message);
+    res.status(500).json({ error: 'Erro ao carregar filmes populares.' });
+  }
+};
+
+// ----------------------------------------
+// GET /filmes/genero?nome=Ação — filtro de gênero, também direto do TMDB
+// ----------------------------------------
+const listarPorGenero = async (req, res) => {
+  const { nome } = req.query;
+  const page = obterPagina(req);
+
+  if (!nome) {
+    return res.status(400).json({ error: 'Informe o nome do gênero.' });
+  }
+
+  try {
+    const [generoRows] = await pool.query(
+      'SELECT id_tmdb FROM TB_Genero WHERE nm_genero = ?',
+      [nome]
+    );
+
+    if (generoRows.length === 0) {
+      return res.status(404).json({ error: 'Gênero não encontrado.' });
+    }
+
+    const dadosTMDB = await chamarTMDB('/discover/movie', {
+      with_genres: generoRows[0].id_tmdb,
+      sort_by: 'popularity.desc',
+      page,
+    });
+
+    const filmesSalvos = await processarLista(dadosTMDB.results);
+    res.json(formatarResposta(dadosTMDB, filmesSalvos));
+  } catch (err) {
+    console.error('Erro ao listar por gênero:', err.message);
+    res.status(500).json({ error: 'Erro ao carregar filmes desse gênero.' });
+  }
+};
+
+// ----------------------------------------
+// GET /filmes/buscar?q=&page= — busca por termo
+// ----------------------------------------
 const buscarFilmes = async (req, res) => {
   const { q } = req.query;
+  const page = obterPagina(req);
 
   if (!q) {
     return res.status(400).json({ error: 'Informe um termo de busca.' });
   }
 
   try {
-    let filmesTMDB = await buscarNoTMDB(q, 'pt-BR');
+    let dadosTMDB = await chamarTMDB('/search/movie', { query: q, page, language: 'pt-BR' });
 
-    if (filmesTMDB.length === 0) {
-      filmesTMDB = await buscarNoTMDB(q, 'en-US');
+    // fallback: se não achou nada em português, tenta em inglês
+    if (dadosTMDB.results.length === 0) {
+      dadosTMDB = await chamarTMDB('/search/movie', { query: q, page, language: 'en-US' });
     }
 
-    // processa cada filme isoladamente — se um registro tiver algum problema
-    // inesperado (campo que ainda não previmos), ele é ignorado e registrado
-    // no console, mas não derruba a resposta inteira
-    const filmesFormatados = [];
-
-    for (const filme of filmesTMDB) {
-      try {
-        const filmeSalvo = await salvarFilme(filme);
-        filmesFormatados.push(filmeSalvo);
-      } catch (erroFilme) {
-        console.warn(`Filme ignorado na busca "${q}":`, erroFilme.message);
-      }
-    }
-
-    res.json(filmesFormatados);
+    const filmesSalvos = await processarLista(dadosTMDB.results);
+    res.json(formatarResposta(dadosTMDB, filmesSalvos));
   } catch (err) {
     console.error('Erro ao buscar filmes:', err.message);
     res.status(500).json({ error: 'Erro ao buscar filmes.' });
   }
 };
 
-// LISTAR FILMES SALVOS NO BANCO, COM FILTRO OPCIONAL DE GÊNERO
-// LISTAR FILMES SALVOS NO BANCO, COM FILTRO OPCIONAL DE GÊNERO E PAGINAÇÃO
-const listarFilmes = async (req, res) => {
-  const { genero } = req.query;
-
-  const page = Math.max(parseInt(req.query.page) || 1, 1);
-  const limit = Math.min(parseInt(req.query.limit) || 20, 100); // nunca mais que 100 por página
-  const offset = (page - 1) * limit;
-
-  try {
-    // parte da query compartilhada entre a contagem total e a busca paginada
-    let baseQuery = 'FROM TB_Filme f';
-    const params = [];
-
-    if (genero) {
-      baseQuery += `
-        INNER JOIN TB_Filme_Genero fg ON f.id_filme = fg.id_filme
-        INNER JOIN TB_Genero g ON fg.id_genero = g.id_genero
-        WHERE g.nm_genero = ?
-      `;
-      params.push(genero);
-    }
-
-    // total de filmes que respeitam o filtro, para calcular quantas páginas existem
-    const [totalRows] = await pool.query(
-      `SELECT COUNT(DISTINCT f.id_filme) AS total ${baseQuery}`,
-      params
-    );
-    const total = totalRows[0].total;
-
-    const [filmes] = await pool.query(
-      `SELECT DISTINCT f.* ${baseQuery} ORDER BY f.nm_filme LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
-    );
-
-    res.json({
-      data: filmes,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
-      },
-    });
-  } catch (err) {
-    console.error('Erro ao listar filmes:', err.message);
-    res.status(500).json({ error: 'Erro ao listar filmes.' });
-  }
-};
-
-module.exports = { buscarFilmes, listarFilmes, salvarFilme };
+module.exports = { listarPopulares, listarPorGenero, buscarFilmes, salvarFilme };
