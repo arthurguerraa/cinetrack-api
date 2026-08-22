@@ -1,6 +1,12 @@
-const { Resend } = require('resend');
+const nodemailer = require("nodemailer");
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_APP_PASSWORD,
+  },
+});
 
 /**
  * Monta o HTML padrão dos emails transacionais do CineTrack,
@@ -31,22 +37,25 @@ function montarTemplateCodigo({ nome, codigo, titulo, mensagem }) {
   `;
 }
 
+/**
+ * Envia email usando o transporter do Nodemailer.
+ * Lança exceção em caso de falha de autenticação (EAUTH) ou envio rejeitado.
+ */
 async function enviarEmail({ to, subject, html }) {
-  const resultado = await resend.emails.send({
-    from: 'CineTrack <onboarding@resend.dev>',
+  const info = await transporter.sendMail({
+    from: `CineTrack <${process.env.EMAIL_USER}>`,
     to,
     subject,
     html,
   });
 
-  // o SDK do Resend não lança exceção em erro de API — ele retorna
-  // { data, error }. Sem essa checagem, um envio recusado passaria
-  // despercebido e a rota responderia "sucesso" de qualquer forma.
-  if (resultado.error) {
-    throw new Error(`Falha ao enviar email: ${resultado.error.message}`);
+  if (info.rejected && info.rejected.length > 0) {
+    throw new Error(
+      `Falha ao enviar email: destinatário rejeitado (${info.rejected.join(", ")})`,
+    );
   }
 
-  return resultado.data;
+  return info;
 }
 
 /**
@@ -56,11 +65,16 @@ async function enviarCodigoVerificacao(email, nome, codigo) {
   const html = montarTemplateCodigo({
     nome,
     codigo,
-    titulo: 'Confirme seu email',
-    mensagem: 'Use o código abaixo para confirmar seu email. Ele expira em 15 minutos.',
+    titulo: "Confirme seu email",
+    mensagem:
+      "Use o código abaixo para confirmar seu email. Ele expira em 15 minutos.",
   });
 
-  return enviarEmail({ to: email, subject: 'Confirme seu email · CineTrack', html });
+  return enviarEmail({
+    to: email,
+    subject: "Confirme seu email · CineTrack",
+    html,
+  });
 }
 
 /**
@@ -70,11 +84,16 @@ async function enviarCodigoRecuperacao(email, nome, codigo) {
   const html = montarTemplateCodigo({
     nome,
     codigo,
-    titulo: 'Redefinição de senha',
-    mensagem: 'Use o código abaixo para criar uma nova senha. Ele expira em 15 minutos.',
+    titulo: "Redefinição de senha",
+    mensagem:
+      "Use o código abaixo para criar uma nova senha. Ele expira em 15 minutos.",
   });
 
-  return enviarEmail({ to: email, subject: 'Redefinir senha · CineTrack', html });
+  return enviarEmail({
+    to: email,
+    subject: "Redefinir senha · CineTrack",
+    html,
+  });
 }
 
 module.exports = { enviarCodigoVerificacao, enviarCodigoRecuperacao };

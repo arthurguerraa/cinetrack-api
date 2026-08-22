@@ -35,6 +35,7 @@ src/
 ## Como rodar o projeto
 
 ### Pré-requisitos
+
 - Node.js instalado
 - MySQL instalado e rodando
 - Uma API Key do [TMDB](https://www.themoviedb.org/settings/api)
@@ -54,6 +55,7 @@ npm install
 ```
 
 **.env**
+
 ```env
 DB_HOST=localhost
 DB_USER=root
@@ -94,12 +96,13 @@ O token é obtido através da rota de login e tem validade de 7 dias.
 
 ### Autenticação
 
-| Método | Rota | Protegida | Descrição |
-|---|---|---|---|
-| POST | `/auth/cadastrar` | Não | Cadastra um novo usuário |
-| POST | `/auth/login` | Não | Autentica o usuário e retorna o token JWT |
+| Método | Rota              | Protegida | Descrição                                 |
+| ------ | ----------------- | --------- | ----------------------------------------- |
+| POST   | `/auth/cadastrar` | Não       | Cadastra um novo usuário                  |
+| POST   | `/auth/login`     | Não       | Autentica o usuário e retorna o token JWT |
 
 **POST /auth/cadastrar**
+
 ```json
 {
   "nm_usuario": "Arthur",
@@ -109,13 +112,16 @@ O token é obtido através da rota de login e tem validade de 7 dias.
 ```
 
 **POST /auth/login**
+
 ```json
 {
   "ds_email": "arthur@email.com",
   "ds_senha": "123456"
 }
 ```
+
 Resposta:
+
 ```json
 { "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." }
 ```
@@ -124,11 +130,11 @@ Resposta:
 
 ### Filmes
 
-| Método | Rota | Protegida | Descrição |
-|---|---|---|---|
-| GET | `/filmes/buscar?q=` | Não | Busca filmes no TMDB e salva no banco automaticamente, vinculando os gêneros |
-| GET | `/filmes` | Não | Lista os filmes já salvos no banco |
-| GET | `/filmes?genero=` | Não | Lista os filmes filtrados por gênero |
+| Método | Rota                | Protegida | Descrição                                                                    |
+| ------ | ------------------- | --------- | ---------------------------------------------------------------------------- |
+| GET    | `/filmes/buscar?q=` | Não       | Busca filmes no TMDB e salva no banco automaticamente, vinculando os gêneros |
+| GET    | `/filmes`           | Não       | Lista os filmes já salvos no banco                                           |
+| GET    | `/filmes?genero=`   | Não       | Lista os filmes filtrados por gênero                                         |
 
 **GET /filmes/buscar?q=batman**
 
@@ -142,22 +148,23 @@ Retorna os filmes do banco vinculados ao gênero informado.
 
 ### Gêneros
 
-| Método | Rota | Protegida | Descrição |
-|---|---|---|---|
-| POST | `/generos/sincronizar` | Não | Sincroniza a lista de gêneros do TMDB com o banco local (executar uma vez) |
-| GET | `/generos` | Não | Lista os gêneros salvos no banco |
+| Método | Rota                   | Protegida | Descrição                                                                  |
+| ------ | ---------------------- | --------- | -------------------------------------------------------------------------- |
+| POST   | `/generos/sincronizar` | Não       | Sincroniza a lista de gêneros do TMDB com o banco local (executar uma vez) |
+| GET    | `/generos`             | Não       | Lista os gêneros salvos no banco                                           |
 
 ---
 
 ### Avaliações
 
-| Método | Rota | Protegida | Descrição |
-|---|---|---|---|
-| POST | `/avaliacoes` | Sim | Cria uma avaliação para um filme |
-| PUT | `/avaliacoes/:id_avaliacao` | Sim | Edita uma avaliação existente |
-| DELETE | `/avaliacoes/:id_avaliacao` | Sim | Remove uma avaliação |
+| Método | Rota                        | Protegida | Descrição                        |
+| ------ | --------------------------- | --------- | -------------------------------- |
+| POST   | `/avaliacoes`               | Sim       | Cria uma avaliação para um filme |
+| PUT    | `/avaliacoes/:id_avaliacao` | Sim       | Edita uma avaliação existente    |
+| DELETE | `/avaliacoes/:id_avaliacao` | Sim       | Remove uma avaliação             |
 
 **POST /avaliacoes**
+
 ```json
 {
   "id_filme": 8,
@@ -167,6 +174,7 @@ Retorna os filmes do banco vinculados ao gênero informado.
 ```
 
 **Regras de negócio:**
+
 - A nota deve estar entre 1 e 10
 - Um usuário não pode avaliar o mesmo filme mais de uma vez
 - Apenas o autor da avaliação pode editá-la ou deletá-la
@@ -175,16 +183,17 @@ Retorna os filmes do banco vinculados ao gênero informado.
 
 ### Listas
 
-| Método | Rota | Protegida | Descrição |
-|---|---|---|---|
-| POST | `/listas` | Sim | Cria uma nova lista |
-| GET | `/listas` | Sim | Lista as listas do usuário logado |
-| PUT | `/listas/:id_lista` | Sim | Edita uma lista |
-| DELETE | `/listas/:id_lista` | Sim | Remove uma lista |
-| POST | `/listas/filmes` | Sim | Adiciona um filme a uma lista |
-| GET | `/listas/:id_lista/filmes` | Sim | Lista os filmes de uma lista específica |
+| Método | Rota                       | Protegida | Descrição                               |
+| ------ | -------------------------- | --------- | --------------------------------------- |
+| POST   | `/listas`                  | Sim       | Cria uma nova lista                     |
+| GET    | `/listas`                  | Sim       | Lista as listas do usuário logado       |
+| PUT    | `/listas/:id_lista`        | Sim       | Edita uma lista                         |
+| DELETE | `/listas/:id_lista`        | Sim       | Remove uma lista                        |
+| POST   | `/listas/filmes`           | Sim       | Adiciona um filme a uma lista           |
+| GET    | `/listas/:id_lista/filmes` | Sim       | Lista os filmes de uma lista específica |
 
 **POST /listas**
+
 ```json
 {
   "nm_lista": "Favoritos de Batman",
@@ -194,6 +203,7 @@ Retorna os filmes do banco vinculados ao gênero informado.
 ```
 
 **POST /listas/filmes**
+
 ```json
 {
   "id_lista": 1,
@@ -202,6 +212,7 @@ Retorna os filmes do banco vinculados ao gênero informado.
 ```
 
 **Regras de negócio:**
+
 - Uma lista pertence a um único usuário
 - Um filme pode estar em várias listas, inclusive de usuários diferentes
 - Listas privadas (`is_visibilidade: false`) só podem ser visualizadas pelo próprio dono
@@ -210,9 +221,9 @@ Retorna os filmes do banco vinculados ao gênero informado.
 
 ### Ranking
 
-| Método | Rota | Protegida | Descrição |
-|---|---|---|---|
-| GET | `/ranking?limit=` | Não | Retorna os filmes mais bem avaliados pela comunidade |
+| Método | Rota              | Protegida | Descrição                                            |
+| ------ | ----------------- | --------- | ---------------------------------------------------- |
+| GET    | `/ranking?limit=` | Não       | Retorna os filmes mais bem avaliados pela comunidade |
 
 **GET /ranking?limit=10**
 
@@ -237,14 +248,14 @@ TB_Usuario 1─N TB_Lista N─N TB_Filme N─N TB_Genero
 
 ## Status de erro
 
-| Código | Significado |
-|---|---|
-| 400 | Dados inválidos ou incompletos |
-| 401 | Token ausente, inválido ou expirado |
-| 403 | Acesso negado (ex: lista privada de outro usuário) |
-| 404 | Recurso não encontrado |
-| 409 | Conflito (ex: email já cadastrado, avaliação duplicada) |
-| 500 | Erro interno do servidor |
+| Código | Significado                                             |
+| ------ | ------------------------------------------------------- |
+| 400    | Dados inválidos ou incompletos                          |
+| 401    | Token ausente, inválido ou expirado                     |
+| 403    | Acesso negado (ex: lista privada de outro usuário)      |
+| 404    | Recurso não encontrado                                  |
+| 409    | Conflito (ex: email já cadastrado, avaliação duplicada) |
+| 500    | Erro interno do servidor                                |
 
 ---
 
