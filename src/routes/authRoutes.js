@@ -1,5 +1,4 @@
 const express = require('express');
-const router = express.Router();
 const {
   cadastrar,
   login,
@@ -9,11 +8,15 @@ const {
   redefinirSenha,
 } = require('../controllers/authController');
 
-router.post('/cadastrar', cadastrar);
-router.post('/login', login);
-router.post('/verificar', verificarCodigo);
-router.post('/reenviar-codigo', reenviarCodigo);
-router.post('/esqueci-senha', esqueciSenha);
-router.post('/redefinir-senha', redefinirSenha);
+module.exports = (limiteAuth) => {
+  const router = express.Router();
 
-module.exports = router;
+  router.post('/cadastrar', limiteAuth, cadastrar);
+  router.post('/login', limiteAuth, login);
+  router.post('/verificar', limiteAuth, verificarCodigo);
+  router.post('/reenviar-codigo', limiteAuth, reenviarCodigo);
+  router.post('/esqueci-senha', limiteAuth, esqueciSenha);
+  router.post('/redefinir-senha', limiteAuth, redefinirSenha);
+
+  return router;
+};

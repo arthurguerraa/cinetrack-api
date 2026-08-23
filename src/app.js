@@ -1,9 +1,12 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 require('./config/database');
 
 const app = express();
+app.set('trust proxy', 1); /* Se o deploy for atrás de um proxy (Railway, Render, Vercel), adicionar isso logo depois de criar o app */
 
 // ----------------------------------------
 // Configurações do Express
@@ -13,9 +16,28 @@ const app = express();
 // já que o frontend é testado via file:// (origem "null") e não tem porta fixa.
 // Quando for para produção, restrinja para o domínio real do frontend, ex:
 // app.use(cors({ origin: 'https://seu-dominio.com' }));
+app.use(helmet({
+  crossOriginResourcePolicy: false, // necessário para o frontend em outra origem conseguir consumir a API
+}));
 app.use(cors());
-
 app.use(express.json());
+
+const limiteGeral = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { error: 'Muitas requisições. Tente novamente em alguns minutos.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(limiteGeral);
+
+const limiteAuth = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Muitas tentativas. Tente novamente em alguns minutos.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // teste se o servidor está rodando
 app.get('/', (req, res) => {
@@ -25,7 +47,7 @@ app.get('/', (req, res) => {
 // ----------------------------------------
 // Rotas do sistema
 // ----------------------------------------
-const authRoutes = require('./routes/authRoutes');
+const authRoutes = require('./routes/authRoutes')(limiteAuth);
 app.use('/auth', authRoutes);
 
 const filmeRoutes = require('./routes/filmeRoutes');
