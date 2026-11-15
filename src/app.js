@@ -20,7 +20,8 @@ app.use(helmet({
   crossOriginResourcePolicy: false, // necessário para o frontend em outra origem conseguir consumir a API
 }));
 app.use(cors());
-app.use(express.json());
+// limite maior que o padrão (100kb) para comportar a foto de perfil em base64
+app.use(express.json({ limit: '300kb' }));
 
 const limiteGeral = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -64,6 +65,9 @@ app.use('/ranking', rankingRoutes);
 
 const generoRoutes = require('./routes/generoRoutes');
 app.use('/generos', generoRoutes);
+
+const usuarioRoutes = require('./routes/usuarioRoutes');
+app.use('/usuarios', usuarioRoutes);
 
 // ----------------------------------------
 // Tratamento de erros — sempre depois das rotas
