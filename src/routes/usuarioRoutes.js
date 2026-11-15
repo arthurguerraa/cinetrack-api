@@ -7,10 +7,15 @@ const usuarioController = require('../controllers/usuarioController');
 module.exports = (limiteConta) => {
   const router = express.Router();
 
-  // perfil e foto
+  // perfil, bio e foto
   router.get('/me', verificarToken, usuarioController.obterMeuPerfil);
+  router.put('/bio', verificarToken, usuarioController.atualizarBio);
   router.put('/foto', verificarToken, usuarioController.atualizarFoto);
   router.delete('/foto', verificarToken, usuarioController.removerFoto);
+
+  // dados exibidos na página de perfil
+  router.get('/me/avaliacoes', verificarToken, usuarioController.listarMinhasAvaliacoes);
+  router.get('/me/listas', verificarToken, usuarioController.listarMeuResumoListas);
 
   // nome
   router.put('/nome', verificarToken, usuarioController.atualizarNome);

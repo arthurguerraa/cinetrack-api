@@ -6,7 +6,18 @@ const { enviarCodigoNovoEmail } = require('../services/emailService');
 // Aceita apenas data URL de imagem em base64 (o front sempre envia JPEG 256x256)
 const FORMATO_FOTO = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 const TAMANHO_MAXIMO_FOTO = 150000; // caracteres (~110 KB de imagem)
+const TAMANHO_MAXIMO_BIO = 160;
 const REGEX_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Ordenações permitidas no histórico de avaliações. O ORDER BY não aceita placeholders,
+// então só valores desta lista fixa entram na query (nunca texto vindo do cliente).
+const ORDENACOES_AVALIACOES = {
+  recentes: 'a.created_at DESC',
+  antigas: 'a.created_at ASC',
+  maior_nota: 'a.nr_nota DESC, a.created_at DESC',
+  menor_nota: 'a.nr_nota ASC, a.created_at DESC',
+  titulo: 'f.nm_filme ASC',
+};
 
 function gerarCodigo() {
   return String(Math.floor(100000 + Math.random() * 900000));
@@ -34,14 +45,15 @@ async function buscarUsuario(id_usuario) {
 }
 
 // ----------------------------------------
-// PERFIL E FOTO
+// PERFIL, BIO E FOTO
 // ----------------------------------------
 
 // GET /usuarios/me
 const obterMeuPerfil = async (req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT id_usuario, nm_usuario, ds_email, ds_foto FROM TB_Usuario WHERE id_usuario = ?',
+      `SELECT id_usuario, nm_usuario, ds_email, ds_foto, ds_bio, created_at
+       FROM TB_Usuario WHERE id_usuario = ?`,
       [req.usuario.id_usuario]
     );
 
@@ -53,6 +65,33 @@ const obterMeuPerfil = async (req, res) => {
   } catch (err) {
     console.error('Erro ao buscar perfil:', err.message);
     res.status(500).json({ error: 'Erro ao buscar perfil.' });
+  }
+};
+
+// PUT /usuarios/bio — texto vazio remove a bio
+const atualizarBio = async (req, res) => {
+  const { ds_bio } = req.body || {};
+
+  if (ds_bio !== undefined && ds_bio !== null && typeof ds_bio !== 'string') {
+    return res.status(400).json({ error: 'Bio inválida.' });
+  }
+
+  const bio = typeof ds_bio === 'string' ? ds_bio.trim() : '';
+
+  if (bio.length > TAMANHO_MAXIMO_BIO) {
+    return res.status(400).json({ error: `A bio pode ter no máximo ${TAMANHO_MAXIMO_BIO} caracteres.` });
+  }
+
+  try {
+    await pool.query(
+      'UPDATE TB_Usuario SET ds_bio = ? WHERE id_usuario = ?',
+      [bio || null, req.usuario.id_usuario]
+    );
+
+    res.json({ message: 'Bio atualizada com sucesso!', ds_bio: bio || null });
+  } catch (err) {
+    console.error('Erro ao atualizar bio:', err.message);
+    res.status(500).json({ error: 'Erro ao atualizar bio.' });
   }
 };
 
@@ -97,6 +136,75 @@ const removerFoto = async (req, res) => {
   } catch (err) {
     console.error('Erro ao remover foto:', err.message);
     res.status(500).json({ error: 'Erro ao remover foto.' });
+  }
+};
+
+// ----------------------------------------
+// HISTÓRICO DE AVALIAÇÕES E RESUMO DE LISTAS (página de perfil)
+// ----------------------------------------
+
+// GET /usuarios/me/avaliacoes?limit=10&offset=0&ordem=recentes
+// ordem: recentes | antigas | maior_nota | menor_nota | titulo
+const listarMinhasAvaliacoes = async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+  const ordem = Object.prototype.hasOwnProperty.call(ORDENACOES_AVALIACOES, req.query.ordem)
+    ? req.query.ordem
+    : 'recentes';
+
+  try {
+    const [[contagem]] = await pool.query(
+      'SELECT COUNT(*) AS total FROM TB_Avaliacao WHERE id_usuario = ?',
+      [req.usuario.id_usuario]
+    );
+    const total = Number(contagem.total);
+
+    // id_avaliacao no final garante uma ordem estável entre as "páginas"
+    const [rows] = await pool.query(
+      `SELECT a.id_avaliacao, a.nr_nota, a.ds_comentario, a.created_at,
+              f.id_filme, f.nm_filme, f.ds_poster, f.dt_lancamento
+       FROM TB_Avaliacao a
+       INNER JOIN TB_Filme f ON f.id_filme = a.id_filme
+       WHERE a.id_usuario = ?
+       ORDER BY ${ORDENACOES_AVALIACOES[ordem]}, a.id_avaliacao DESC
+       LIMIT ? OFFSET ?`,
+      [req.usuario.id_usuario, limit, offset]
+    );
+
+    res.json({
+      data: rows,
+      pagination: {
+        total,
+        limit,
+        offset,
+        hasMore: offset + rows.length < total,
+      },
+    });
+  } catch (err) {
+    console.error('Erro ao listar avaliações do usuário:', err.message);
+    res.status(500).json({ error: 'Erro ao buscar suas avaliações.' });
+  }
+};
+
+// GET /usuarios/me/listas — listas do usuário com a contagem de filmes de cada uma
+const listarMeuResumoListas = async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT l.id_lista, l.nm_lista, l.ds_lista, l.is_visibilidade, l.created_at,
+              COUNT(lf.id_filme) AS total_filmes
+       FROM TB_Lista l
+       LEFT JOIN TB_Lista_Filme lf ON lf.id_lista = l.id_lista
+       WHERE l.id_usuario = ?
+       GROUP BY l.id_lista, l.nm_lista, l.ds_lista, l.is_visibilidade, l.created_at
+       ORDER BY l.created_at DESC, l.id_lista DESC`,
+      [req.usuario.id_usuario]
+    );
+
+    res.json(rows.map((lista) => ({ ...lista, total_filmes: Number(lista.total_filmes) })));
+  } catch (err) {
+    console.error('Erro ao listar resumo das listas:', err.message);
+    res.status(500).json({ error: 'Erro ao buscar suas listas.' });
   }
 };
 
@@ -360,8 +468,11 @@ const excluirConta = async (req, res) => {
 
 module.exports = {
   obterMeuPerfil,
+  atualizarBio,
   atualizarFoto,
   removerFoto,
+  listarMinhasAvaliacoes,
+  listarMeuResumoListas,
   atualizarNome,
   alterarSenha,
   solicitarTrocaEmail,
