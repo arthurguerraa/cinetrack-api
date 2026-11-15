@@ -1,6 +1,16 @@
 const tratarErros = (err, req, res, next) => {
   console.error('Erro capturado:', err.message);
 
+  // corpo da requisição maior que o limite do express.json()
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Conteúdo grande demais.' });
+  }
+
+  // JSON malformado no corpo da requisição
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'JSON inválido.' });
+  }
+
   // erro de validação do MySQL (ex: campo obrigatório faltando)
   if (err.code === 'ER_NO_DEFAULT_FOR_FIELD' || err.code === 'ER_BAD_NULL_ERROR') {
     return res.status(400).json({ error: 'Dados inválidos ou incompletos.' });

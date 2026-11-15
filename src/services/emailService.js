@@ -96,4 +96,27 @@ async function enviarCodigoRecuperacao(email, nome, codigo) {
   });
 }
 
-module.exports = { enviarCodigoVerificacao, enviarCodigoRecuperacao };
+/**
+ * Envia o código de 6 dígitos para o NOVO endereço, confirmando a troca de email.
+ */
+async function enviarCodigoNovoEmail(email, nome, codigo) {
+  const html = montarTemplateCodigo({
+    nome,
+    codigo,
+    titulo: "Confirme seu novo email",
+    mensagem:
+      "Use o código abaixo para confirmar a troca do email da sua conta. Ele expira em 15 minutos.",
+  });
+
+  return enviarEmail({
+    to: email,
+    subject: "Confirme seu novo email · CineTrack",
+    html,
+  });
+}
+
+module.exports = {
+  enviarCodigoVerificacao,
+  enviarCodigoRecuperacao,
+  enviarCodigoNovoEmail,
+};

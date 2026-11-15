@@ -40,6 +40,16 @@ const limiteAuth = rateLimit({
   legacyHeaders: false,
 });
 
+// Rotas sensíveis da conta (trocar senha/email, excluir conta).
+// Instância separada de limiteAuth, para os contadores não se misturarem.
+const limiteConta = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Muitas tentativas. Tente novamente em alguns minutos.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // teste se o servidor está rodando
 app.get('/', (req, res) => {
   res.json({ message: 'CineTrack API rodando!' });
@@ -66,7 +76,7 @@ app.use('/ranking', rankingRoutes);
 const generoRoutes = require('./routes/generoRoutes');
 app.use('/generos', generoRoutes);
 
-const usuarioRoutes = require('./routes/usuarioRoutes');
+const usuarioRoutes = require('./routes/usuarioRoutes')(limiteConta);
 app.use('/usuarios', usuarioRoutes);
 
 // ----------------------------------------
