@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const axios = require('axios');
+const { anexarNotaCombinada } = require('../services/notaService');
 
 const POSTER_PADRAO = 'https://via.placeholder.com/500x750/1C1C1C/8C8C8C?text=Sem+poster';
 const TMDB_API_URL = 'https://api.themoviedb.org/3';
@@ -17,11 +18,15 @@ const SORT_DISCOVER = {
   lancamento_antigos: 'primary_release_date.asc',
 };
 
+// Mínimo de votos (do TMDB) para a nota de um filme ser considerada confiável nas
+// ordenações por nota. Vale tanto na ordenação global quanto na da página.
+const MIN_VOTOS_NOTA = 200;
+
 // Mínimo de votos exigido na ordenação global. Sem isso, filmes obscuros com um único voto
 // 10 (ou 1) dominariam as listas de nota; nas de lançamento, o corte tira filmes sem dados.
 const MIN_VOTOS_DISCOVER = {
-  maior_nota: 200,
-  menor_nota: 200,
+  maior_nota: MIN_VOTOS_NOTA,
+  menor_nota: MIN_VOTOS_NOTA,
   lancamento_recentes: 5,
   lancamento_antigos: 5,
 };
@@ -41,6 +46,9 @@ function parametrosDiscoverOrdenado(ordem) {
 /**
  * Ordena só os filmes da página atual. Valores ausentes (nota 0, sem data) ficam no fim,
  * em qualquer direção — mesmo comportamento das listas do usuário.
+ * Nas ordenações por nota, filmes com votos suficientes vêm antes dos que têm poucos votos
+ * (que continuam ordenados por nota entre si, só que depois), para uma nota 10 com um único
+ * voto não aparecer em primeiro lugar.
  */
 function ordenarPagina(filmesTMDB, ordem) {
   const nulosPorUltimo = (valor, direcao) => (a, b) => {
@@ -54,10 +62,21 @@ function ordenarPagina(filmesTMDB, ordem) {
 
   const nota = (f) => (f.vote_average > 0 ? f.vote_average : null);
   const data = (f) => (f.release_date ? Date.parse(f.release_date) : null);
+  const votosSuficientes = (f) => (f.vote_count || 0) >= MIN_VOTOS_NOTA;
+
+  const porNotaConfiavel = (direcao) => {
+    const porNota = nulosPorUltimo(nota, direcao);
+    return (a, b) => {
+      const confiavelA = votosSuficientes(a);
+      const confiavelB = votosSuficientes(b);
+      if (confiavelA !== confiavelB) return confiavelA ? -1 : 1;
+      return porNota(a, b);
+    };
+  };
 
   const comparadores = {
-    maior_nota: nulosPorUltimo(nota, -1),
-    menor_nota: nulosPorUltimo(nota, 1),
+    maior_nota: porNotaConfiavel(-1),
+    menor_nota: porNotaConfiavel(1),
     lancamento_recentes: nulosPorUltimo(data, -1),
     lancamento_antigos: nulosPorUltimo(data, 1),
     titulo: (a, b) =>
@@ -190,6 +209,9 @@ async function salvarFilme(filme) {
  * Processa uma lista de filmes vinda do TMDB, salvando cada um isoladamente.
  * Um filme com problema é ignorado sem derrubar os outros. A ordem da lista
  * recebida é preservada.
+ *
+ * No fim, troca a nota do TMDB pela nota combinada (TMDB + comunidade CineTrack).
+ * Cada filme devolve: nota (combinada), nota_tmdb (original) e total_avaliacoes (locais).
  */
 async function processarLista(filmesTMDB) {
   const resultado = [];
@@ -200,7 +222,14 @@ async function processarLista(filmesTMDB) {
       console.warn('Filme ignorado:', erroFilme.message);
     }
   }
-  return resultado;
+
+  const comNota = await anexarNotaCombinada(resultado, 'nota');
+
+  return comNota.map((filme) => ({
+    ...filme,
+    nota_tmdb: filme.nota,
+    nota: filme.nota_combinada,
+  }));
 }
 
 /**

@@ -1,5 +1,6 @@
 const axios = require('axios');
 const pool = require('../config/database');
+const { anexarNotaCombinada } = require('../services/notaService');
 
 const TMDB_URL = 'https://api.themoviedb.org/3';
 const MAX_DURACOES_POR_REQUISICAO = 30;
@@ -175,13 +176,8 @@ const adicionarFilme = async (req, res) => {
 // ----------------------------------------
 // VER FILMES DE UMA LISTA
 // Devolve { lista, is_dono, duracoes_pendentes, filmes }.
+// Cada filme traz "generos" (array de nomes), "nota_combinada" e "total_avaliacoes".
 // O progresso (assistido) só é devolvido ao dono da lista.
-// ----------------------------------------
-// ----------------------------------------
-// VER FILMES DE UMA LISTA
-// Devolve { lista, is_dono, duracoes_pendentes, filmes }.
-// Cada filme traz "generos" (array de nomes). O progresso (assistido) só é
-// devolvido ao dono da lista.
 // ----------------------------------------
 const verFilmesDaLista = async (req, res) => {
   const { id_lista } = req.params;
@@ -238,6 +234,9 @@ const verFilmesDaLista = async (req, res) => {
       });
     }
 
+    // NOVO: nota combinada (TMDB + comunidade CineTrack) de todos os filmes de uma vez
+    const filmesComNota = await anexarNotaCombinada(filmes, 'nr_nota_media');
+
     // filmes cuja duração ainda não foi buscada (NULL); 0 significa "não encontrada"
     const duracoes_pendentes = process.env.TMDB_API_KEY
       ? filmes.filter((f) => f.nr_duracao === null).length
@@ -249,7 +248,7 @@ const verFilmesDaLista = async (req, res) => {
       lista: listaEncontrada,
       is_dono,
       duracoes_pendentes,
-      filmes: filmes.map((f) => ({
+      filmes: filmesComNota.map((f) => ({ // NOVO: filmesComNota no lugar de filmes
         ...f,
         generos: generosPorFilme.get(f.id_filme) || [],
         nr_duracao: f.nr_duracao || null,

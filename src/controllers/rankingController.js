@@ -1,10 +1,6 @@
-const pool = require('../config/database');
 const axios = require('axios');
 const { salvarFilme } = require('./filmeController');
-
-// Quantidade "de referência" de avaliações do CineTrack necessária para que
-// a nota da comunidade pese tanto quanto a nota que já vem do TMDB.
-const PESO_MINIMO_AVALIACOES = 5;
+const { calcularNotaCombinada, buscarAvaliacoesLocais } = require('../services/notaService');
 
 const TMDB_API_URL = 'https://api.themoviedb.org/3';
 
@@ -49,38 +45,22 @@ const verRanking = async (req, res) => {
       }
     }
 
-    const ids = filmesComId.map((f) => f.id_filme);
-
-    // busca, numa única query, a média e o total de avaliações locais de
-    // todos os filmes de uma vez — evita fazer uma consulta por filme
-    let avaliacoesPorFilme = {};
-    if (ids.length > 0) {
-      const [linhas] = await pool.query(
-        `SELECT id_filme, AVG(nr_nota) AS media, COUNT(*) AS total
-         FROM TB_Avaliacao
-         WHERE id_filme IN (?)
-         GROUP BY id_filme`,
-        [ids]
-      );
-      avaliacoesPorFilme = Object.fromEntries(
-        linhas.map((l) => [l.id_filme, { media: parseFloat(l.media), total: l.total }])
-      );
-    }
+    // média e total de avaliações locais de todos os filmes, numa única query
+    const avaliacoesPorFilme = await buscarAvaliacoesLocais(filmesComId.map((f) => f.id_filme));
 
     const ranking = filmesComId.map((filme) => {
-      const dadosLocais = avaliacoesPorFilme[filme.id_filme] || { media: 0, total: 0 };
-      const { media, total } = dadosLocais;
-
-      const notaCombinada =
-        (total / (total + PESO_MINIMO_AVALIACOES)) * media +
-        (PESO_MINIMO_AVALIACOES / (total + PESO_MINIMO_AVALIACOES)) * filme.notaTmdbAoVivo;
+      const { media, total } = avaliacoesPorFilme.get(filme.id_filme) || { media: 0, total: 0 };
 
       return {
         id_filme: filme.id_filme,
         titulo: filme.titulo,
         poster: filme.poster,
         ano: filme.ano,
-        nota_combinada: notaCombinada,
+        nota_combinada: calcularNotaCombinada({
+          mediaLocal: media,
+          totalLocal: total,
+          notaTmdb: filme.notaTmdbAoVivo,
+        }),
         total_avaliacoes: total,
       };
     });
