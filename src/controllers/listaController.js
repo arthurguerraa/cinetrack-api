@@ -177,6 +177,12 @@ const adicionarFilme = async (req, res) => {
 // Devolve { lista, is_dono, duracoes_pendentes, filmes }.
 // O progresso (assistido) só é devolvido ao dono da lista.
 // ----------------------------------------
+// ----------------------------------------
+// VER FILMES DE UMA LISTA
+// Devolve { lista, is_dono, duracoes_pendentes, filmes }.
+// Cada filme traz "generos" (array de nomes). O progresso (assistido) só é
+// devolvido ao dono da lista.
+// ----------------------------------------
 const verFilmesDaLista = async (req, res) => {
   const { id_lista } = req.params;
   const id_usuario = req.usuario.id_usuario;
@@ -213,6 +219,25 @@ const verFilmesDaLista = async (req, res) => {
       [id_lista]
     );
 
+    // gêneros de todos os filmes da lista em uma única consulta
+    const generosPorFilme = new Map();
+
+    if (filmes.length > 0) {
+      const [generos] = await pool.query(
+        `SELECT fg.id_filme, g.nm_genero
+         FROM TB_Filme_Genero fg
+         INNER JOIN TB_Genero g ON g.id_genero = fg.id_genero
+         WHERE fg.id_filme IN (?)
+         ORDER BY g.nm_genero ASC`,
+        [filmes.map((f) => f.id_filme)]
+      );
+
+      generos.forEach(({ id_filme, nm_genero }) => {
+        if (!generosPorFilme.has(id_filme)) generosPorFilme.set(id_filme, []);
+        generosPorFilme.get(id_filme).push(nm_genero);
+      });
+    }
+
     // filmes cuja duração ainda não foi buscada (NULL); 0 significa "não encontrada"
     const duracoes_pendentes = process.env.TMDB_API_KEY
       ? filmes.filter((f) => f.nr_duracao === null).length
@@ -226,6 +251,7 @@ const verFilmesDaLista = async (req, res) => {
       duracoes_pendentes,
       filmes: filmes.map((f) => ({
         ...f,
+        generos: generosPorFilme.get(f.id_filme) || [],
         nr_duracao: f.nr_duracao || null,
         is_assistido: is_dono ? Boolean(f.is_assistido) : false,
         dt_assistido: is_dono ? f.dt_assistido : null,
