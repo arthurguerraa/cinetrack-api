@@ -4,6 +4,75 @@ const axios = require('axios');
 const POSTER_PADRAO = 'https://via.placeholder.com/500x750/1C1C1C/8C8C8C?text=Sem+poster';
 const TMDB_API_URL = 'https://api.themoviedb.org/3';
 
+// ----------------------------------------
+// Ordenação
+// ----------------------------------------
+const ORDENS_VALIDAS = ['maior_nota', 'menor_nota', 'lancamento_recentes', 'lancamento_antigos', 'titulo'];
+
+// Ordenações que o /discover do TMDB faz em TODOS os filmes (não só na página atual)
+const SORT_DISCOVER = {
+  maior_nota: 'vote_average.desc',
+  menor_nota: 'vote_average.asc',
+  lancamento_recentes: 'primary_release_date.desc',
+  lancamento_antigos: 'primary_release_date.asc',
+};
+
+// Mínimo de votos exigido na ordenação global. Sem isso, filmes obscuros com um único voto
+// 10 (ou 1) dominariam as listas de nota; nas de lançamento, o corte tira filmes sem dados.
+const MIN_VOTOS_DISCOVER = {
+  maior_nota: 200,
+  menor_nota: 200,
+  lancamento_recentes: 5,
+  lancamento_antigos: 5,
+};
+
+function obterOrdem(req) {
+  return ORDENS_VALIDAS.includes(req.query.ordem) ? req.query.ordem : 'padrao';
+}
+
+function parametrosDiscoverOrdenado(ordem) {
+  return {
+    sort_by: SORT_DISCOVER[ordem],
+    'vote_count.gte': MIN_VOTOS_DISCOVER[ordem],
+    'release_date.lte': dataDeHoje(),
+  };
+}
+
+/**
+ * Ordena só os filmes da página atual. Valores ausentes (nota 0, sem data) ficam no fim,
+ * em qualquer direção — mesmo comportamento das listas do usuário.
+ */
+function ordenarPagina(filmesTMDB, ordem) {
+  const nulosPorUltimo = (valor, direcao) => (a, b) => {
+    const va = valor(a);
+    const vb = valor(b);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    return (va - vb) * direcao;
+  };
+
+  const nota = (f) => (f.vote_average > 0 ? f.vote_average : null);
+  const data = (f) => (f.release_date ? Date.parse(f.release_date) : null);
+
+  const comparadores = {
+    maior_nota: nulosPorUltimo(nota, -1),
+    menor_nota: nulosPorUltimo(nota, 1),
+    lancamento_recentes: nulosPorUltimo(data, -1),
+    lancamento_antigos: nulosPorUltimo(data, 1),
+    titulo: (a, b) =>
+      String(a.title || '').localeCompare(String(b.title || ''), 'pt-BR', { sensitivity: 'base' }),
+  };
+
+  const comparar = comparadores[ordem];
+  return comparar ? [...filmesTMDB].sort(comparar) : filmesTMDB;
+}
+
+// Quando só existe uma página de resultados, ordenar a página já é ordenar tudo.
+function escopoDaPagina(dadosTMDB) {
+  return dadosTMDB.total_pages > 1 ? 'pagina' : 'global';
+}
+
 /**
  * Data de hoje no formato AAAA-MM-DD, no fuso do Brasil. Usar o fuso certo evita que
  * um filme que estreia hoje some no fim da tarde, quando o UTC já virou o dia.
@@ -119,7 +188,8 @@ async function salvarFilme(filme) {
 
 /**
  * Processa uma lista de filmes vinda do TMDB, salvando cada um isoladamente.
- * Um filme com problema é ignorado sem derrubar os outros.
+ * Um filme com problema é ignorado sem derrubar os outros. A ordem da lista
+ * recebida é preservada.
  */
 async function processarLista(filmesTMDB) {
   const resultado = [];
@@ -134,11 +204,12 @@ async function processarLista(filmesTMDB) {
 }
 
 /**
- * Monta a resposta padrão { data, pagination } a partir do retorno do TMDB,
- * usado pelos três endpoints (populares, gênero, busca) para manter o
- * mesmo formato que o frontend já espera.
+ * Monta a resposta padrão { data, pagination, ordenacao } a partir do retorno do TMDB,
+ * usado pelos três endpoints (populares, gênero, busca).
+ * ordenacao: 'padrao' (sem ordem escolhida), 'global' (todos os filmes) ou
+ * 'pagina' (só os filmes da página atual — o frontend avisa o usuário).
  */
-function formatarResposta(dadosTMDB, filmesSalvos) {
+function formatarResposta(dadosTMDB, filmesSalvos, ordenacao = 'padrao') {
   return {
     data: filmesSalvos,
     pagination: {
@@ -147,6 +218,7 @@ function formatarResposta(dadosTMDB, filmesSalvos) {
       hasNext: dadosTMDB.page < Math.min(dadosTMDB.total_pages, 500),
       hasPrev: dadosTMDB.page > 1,
     },
+    ordenacao,
   };
 }
 
@@ -156,15 +228,34 @@ function obterPagina(req) {
 }
 
 // ----------------------------------------
-// GET /filmes/populares — estado padrão da home, sem busca nem filtro
+// GET /filmes/populares?page=&ordem= — estado padrão da home, sem busca nem filtro
+// Sem ordem: em alta na semana (trending). Com nota/lançamento: /discover (ordem global).
 // ----------------------------------------
 const listarPopulares = async (req, res) => {
   const page = obterPagina(req);
+  const ordem = obterOrdem(req);
 
   try {
-    const dadosTMDB = await chamarTMDB('/trending/movie/week', { page });
-    const filmesSalvos = await processarLista(apenasLancados(dadosTMDB.results));
-    res.json(formatarResposta(dadosTMDB, filmesSalvos));
+    let dadosTMDB;
+    let lancados;
+    let ordenacao = 'padrao';
+
+    if (SORT_DISCOVER[ordem]) {
+      dadosTMDB = await chamarTMDB('/discover/movie', { ...parametrosDiscoverOrdenado(ordem), page });
+      lancados = apenasLancados(dadosTMDB.results);
+      ordenacao = 'global';
+    } else {
+      dadosTMDB = await chamarTMDB('/trending/movie/week', { page });
+      lancados = apenasLancados(dadosTMDB.results);
+
+      if (ordem === 'titulo') {
+        lancados = ordenarPagina(lancados, ordem);
+        ordenacao = escopoDaPagina(dadosTMDB);
+      }
+    }
+
+    const filmesSalvos = await processarLista(lancados);
+    res.json(formatarResposta(dadosTMDB, filmesSalvos, ordenacao));
   } catch (err) {
     console.error('Erro ao listar populares:', err.message);
     res.status(500).json({ error: 'Erro ao carregar filmes populares.' });
@@ -172,11 +263,12 @@ const listarPopulares = async (req, res) => {
 };
 
 // ----------------------------------------
-// GET /filmes/genero?nome=Ação — filtro de gênero, também direto do TMDB
+// GET /filmes/genero?nome=Ação&page=&ordem= — filtro de gênero, também direto do TMDB
 // ----------------------------------------
 const listarPorGenero = async (req, res) => {
   const { nome } = req.query;
   const page = obterPagina(req);
+  const ordem = obterOrdem(req);
 
   if (!nome) {
     return res.status(400).json({ error: 'Informe o nome do gênero.' });
@@ -194,15 +286,26 @@ const listarPorGenero = async (req, res) => {
 
     // o discover aceita filtrar por data no próprio TMDB, então a paginação já vem
     // correta; o apenasLancados() depois é só uma segunda garantia
+    const parametros = SORT_DISCOVER[ordem]
+      ? parametrosDiscoverOrdenado(ordem)
+      : { sort_by: 'popularity.desc', 'release_date.lte': dataDeHoje() };
+
     const dadosTMDB = await chamarTMDB('/discover/movie', {
       with_genres: generoRows[0].id_tmdb,
-      sort_by: 'popularity.desc',
-      'release_date.lte': dataDeHoje(),
+      ...parametros,
       page,
     });
 
-    const filmesSalvos = await processarLista(apenasLancados(dadosTMDB.results));
-    res.json(formatarResposta(dadosTMDB, filmesSalvos));
+    let lancados = apenasLancados(dadosTMDB.results);
+    let ordenacao = SORT_DISCOVER[ordem] ? 'global' : 'padrao';
+
+    if (ordem === 'titulo') {
+      lancados = ordenarPagina(lancados, ordem);
+      ordenacao = escopoDaPagina(dadosTMDB);
+    }
+
+    const filmesSalvos = await processarLista(lancados);
+    res.json(formatarResposta(dadosTMDB, filmesSalvos, ordenacao));
   } catch (err) {
     console.error('Erro ao listar por gênero:', err.message);
     res.status(500).json({ error: 'Erro ao carregar filmes desse gênero.' });
@@ -210,11 +313,13 @@ const listarPorGenero = async (req, res) => {
 };
 
 // ----------------------------------------
-// GET /filmes/buscar?q=&page= — busca por termo
+// GET /filmes/buscar?q=&page=&ordem= — busca por termo
+// O TMDB não ordena buscas, então a ordem vale só para a página atual.
 // ----------------------------------------
 const buscarFilmes = async (req, res) => {
   const { q } = req.query;
   const page = obterPagina(req);
+  const ordem = obterOrdem(req);
 
   if (!q) {
     return res.status(400).json({ error: 'Informe um termo de busca.' });
@@ -230,8 +335,15 @@ const buscarFilmes = async (req, res) => {
       lancados = apenasLancados(dadosTMDB.results);
     }
 
+    let ordenacao = 'padrao';
+
+    if (ordem !== 'padrao') {
+      lancados = ordenarPagina(lancados, ordem);
+      ordenacao = escopoDaPagina(dadosTMDB);
+    }
+
     const filmesSalvos = await processarLista(lancados);
-    res.json(formatarResposta(dadosTMDB, filmesSalvos));
+    res.json(formatarResposta(dadosTMDB, filmesSalvos, ordenacao));
   } catch (err) {
     console.error('Erro ao buscar filmes:', err.message);
     res.status(500).json({ error: 'Erro ao buscar filmes.' });
