@@ -5,6 +5,25 @@ const POSTER_PADRAO = 'https://via.placeholder.com/500x750/1C1C1C/8C8C8C?text=Se
 const TMDB_API_URL = 'https://api.themoviedb.org/3';
 
 /**
+ * Data de hoje no formato AAAA-MM-DD, no fuso do Brasil. Usar o fuso certo evita que
+ * um filme que estreia hoje some no fim da tarde, quando o UTC já virou o dia.
+ * O formato 'en-CA' do Intl já devolve AAAA-MM-DD.
+ */
+function dataDeHoje() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+
+/**
+ * Mantém só filmes já lançados (release_date até hoje). Filmes sem data também saem,
+ * porque não há como saber se já estrearam. Como as datas são ISO (AAAA-MM-DD),
+ * a comparação de texto funciona direto.
+ */
+function apenasLancados(filmesTMDB) {
+  const hoje = dataDeHoje();
+  return filmesTMDB.filter((filme) => filme.release_date && filme.release_date <= hoje);
+}
+
+/**
  * Consulta o TMDB numa língua/página específica.
  * Retorna a resposta completa do TMDB (não só os resultados), porque
  * precisamos dos campos de paginação (page, total_pages) para devolver
@@ -42,7 +61,7 @@ async function salvarFilme(filme) {
   }
 
   const [existe] = await pool.query(
-    'SELECT id_filme FROM TB_Filme WHERE nm_filme = ? AND dt_lancamento = ?',
+    'SELECT id_filme, nr_nota_media FROM TB_Filme WHERE nm_filme = ? AND dt_lancamento = ?',
     [titulo, ano]
   );
 
@@ -57,6 +76,17 @@ async function salvarFilme(filme) {
     idFilme = resultado.insertId;
   } else {
     idFilme = existe[0].id_filme;
+
+    // Atualiza a nota guardada quando o TMDB trouxer uma diferente (e válida).
+    // Sem isso, um filme salvo com nota 0 antes de estrear ou de receber votos
+    // ficaria com 0 para sempre nas listas, que leem a nota do banco.
+    const notaArredondada = Math.round(nota * 10) / 10;
+    if (notaArredondada > 0 && Number(existe[0].nr_nota_media) !== notaArredondada) {
+      await pool.query(
+        'UPDATE TB_Filme SET nr_nota_media = ? WHERE id_filme = ?',
+        [notaArredondada, idFilme]
+      );
+    }
   }
 
   if (filme.genre_ids && filme.genre_ids.length > 0) {
@@ -133,7 +163,7 @@ const listarPopulares = async (req, res) => {
 
   try {
     const dadosTMDB = await chamarTMDB('/trending/movie/week', { page });
-    const filmesSalvos = await processarLista(dadosTMDB.results);
+    const filmesSalvos = await processarLista(apenasLancados(dadosTMDB.results));
     res.json(formatarResposta(dadosTMDB, filmesSalvos));
   } catch (err) {
     console.error('Erro ao listar populares:', err.message);
@@ -162,13 +192,16 @@ const listarPorGenero = async (req, res) => {
       return res.status(404).json({ error: 'Gênero não encontrado.' });
     }
 
+    // o discover aceita filtrar por data no próprio TMDB, então a paginação já vem
+    // correta; o apenasLancados() depois é só uma segunda garantia
     const dadosTMDB = await chamarTMDB('/discover/movie', {
       with_genres: generoRows[0].id_tmdb,
       sort_by: 'popularity.desc',
+      'release_date.lte': dataDeHoje(),
       page,
     });
 
-    const filmesSalvos = await processarLista(dadosTMDB.results);
+    const filmesSalvos = await processarLista(apenasLancados(dadosTMDB.results));
     res.json(formatarResposta(dadosTMDB, filmesSalvos));
   } catch (err) {
     console.error('Erro ao listar por gênero:', err.message);
@@ -189,13 +222,15 @@ const buscarFilmes = async (req, res) => {
 
   try {
     let dadosTMDB = await chamarTMDB('/search/movie', { query: q, page, language: 'pt-BR' });
+    let lancados = apenasLancados(dadosTMDB.results);
 
-    // fallback: se não achou nada em português, tenta em inglês
-    if (dadosTMDB.results.length === 0) {
+    // fallback: se não sobrou nada em português (nem lançados), tenta em inglês
+    if (lancados.length === 0) {
       dadosTMDB = await chamarTMDB('/search/movie', { query: q, page, language: 'en-US' });
+      lancados = apenasLancados(dadosTMDB.results);
     }
 
-    const filmesSalvos = await processarLista(dadosTMDB.results);
+    const filmesSalvos = await processarLista(lancados);
     res.json(formatarResposta(dadosTMDB, filmesSalvos));
   } catch (err) {
     console.error('Erro ao buscar filmes:', err.message);
