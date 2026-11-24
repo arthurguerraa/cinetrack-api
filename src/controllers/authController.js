@@ -1,18 +1,10 @@
 const pool = require('../config/database');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const { enviarCodigoVerificacao, enviarCodigoRecuperacao } = require('../services/emailService');
+const { gerarToken } = require('../services/tokenService');
 
 function gerarCodigo() {
   return String(Math.floor(100000 + Math.random() * 900000));
-}
-
-function gerarToken(usuario) {
-  return jwt.sign(
-    { id_usuario: usuario.id_usuario, nm_usuario: usuario.nm_usuario, ds_email: usuario.ds_email },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' }
-  );
 }
 
 // CADASTRO
@@ -253,15 +245,17 @@ const redefinirSenha = async (req, res) => {
 
     const hash = await bcrypt.hash(nova_senha, 10);
 
+    // nr_versao_token + 1: derruba as sessões de todos os dispositivos
     await pool.query(
       `UPDATE TB_Usuario 
-       SET ds_senha = ?, cd_recuperacao = NULL, dt_expiracao_recuperacao = NULL
+       SET ds_senha = ?, cd_recuperacao = NULL, dt_expiracao_recuperacao = NULL,
+           nr_versao_token = nr_versao_token + 1
        WHERE id_usuario = ?`,
       [hash, usuario.id_usuario]
     );
 
-    // já loga o usuário automaticamente após redefinir a senha
-    const token = gerarToken(usuario);
+    // já loga o usuário automaticamente, com um token da versão nova
+    const token = gerarToken({ ...usuario, nr_versao_token: Number(usuario.nr_versao_token) + 1 });
     res.json({ message: 'Senha redefinida com sucesso!', token });
   } catch (err) {
     console.error('Erro ao redefinir senha:', err.message);

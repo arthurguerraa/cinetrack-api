@@ -176,8 +176,9 @@ const adicionarFilme = async (req, res) => {
 // ----------------------------------------
 // VER FILMES DE UMA LISTA
 // Devolve { lista, is_dono, duracoes_pendentes, filmes }.
-// Cada filme traz "generos" (array de nomes), "nota_combinada" e "total_avaliacoes".
-// O progresso (assistido) só é devolvido ao dono da lista.
+// Cada filme traz "generos", "nota_combinada" e "total_avaliacoes".
+// Para o dono da lista, traz também "minha_avaliacao" (ou null). Um filme conta como
+// assistido quando o dono tem uma avaliação dele; não existe marcação separada.
 // ----------------------------------------
 const verFilmesDaLista = async (req, res) => {
   const { id_lista } = req.params;
@@ -206,8 +207,7 @@ const verFilmesDaLista = async (req, res) => {
 
     const [filmes] = await pool.query(
       `SELECT f.id_filme, f.nm_filme, f.ds_sinopse, f.dt_lancamento, f.nr_nota_media,
-              f.ds_poster, f.nr_duracao,
-              lf.dt_adicionado, lf.is_assistido, lf.dt_assistido
+              f.ds_poster, f.nr_duracao, lf.dt_adicionado
        FROM TB_Filme f
        INNER JOIN TB_Lista_Filme lf ON f.id_filme = lf.id_filme
        WHERE lf.id_lista = ?
@@ -215,17 +215,19 @@ const verFilmesDaLista = async (req, res) => {
       [id_lista]
     );
 
+    const idsFilmes = filmes.map((f) => f.id_filme);
+
     // gêneros de todos os filmes da lista em uma única consulta
     const generosPorFilme = new Map();
 
-    if (filmes.length > 0) {
+    if (idsFilmes.length > 0) {
       const [generos] = await pool.query(
         `SELECT fg.id_filme, g.nm_genero
          FROM TB_Filme_Genero fg
          INNER JOIN TB_Genero g ON g.id_genero = fg.id_genero
          WHERE fg.id_filme IN (?)
          ORDER BY g.nm_genero ASC`,
-        [filmes.map((f) => f.id_filme)]
+        [idsFilmes]
       );
 
       generos.forEach(({ id_filme, nm_genero }) => {
@@ -234,7 +236,21 @@ const verFilmesDaLista = async (req, res) => {
       });
     }
 
-    // NOVO: nota combinada (TMDB + comunidade CineTrack) de todos os filmes de uma vez
+    // avaliações do dono para os filmes da lista, em uma única consulta
+    const avaliacaoPorFilme = new Map();
+
+    if (is_dono && idsFilmes.length > 0) {
+      const [avaliacoes] = await pool.query(
+        `SELECT id_avaliacao, id_filme, nr_nota, ds_comentario, created_at
+         FROM TB_Avaliacao
+         WHERE id_usuario = ? AND id_filme IN (?)`,
+        [id_usuario, idsFilmes]
+      );
+
+      avaliacoes.forEach((a) => avaliacaoPorFilme.set(a.id_filme, a));
+    }
+
+    // nota combinada (TMDB + comunidade CineTrack) de todos os filmes de uma vez
     const filmesComNota = await anexarNotaCombinada(filmes, 'nr_nota_media');
 
     // filmes cuja duração ainda não foi buscada (NULL); 0 significa "não encontrada"
@@ -248,13 +264,24 @@ const verFilmesDaLista = async (req, res) => {
       lista: listaEncontrada,
       is_dono,
       duracoes_pendentes,
-      filmes: filmesComNota.map((f) => ({ // NOVO: filmesComNota no lugar de filmes
-        ...f,
-        generos: generosPorFilme.get(f.id_filme) || [],
-        nr_duracao: f.nr_duracao || null,
-        is_assistido: is_dono ? Boolean(f.is_assistido) : false,
-        dt_assistido: is_dono ? f.dt_assistido : null,
-      })),
+      filmes: filmesComNota.map((f) => {
+        const avaliacao = avaliacaoPorFilme.get(f.id_filme);
+
+        return {
+          ...f,
+          generos: generosPorFilme.get(f.id_filme) || [],
+          nr_duracao: f.nr_duracao || null,
+          minha_avaliacao: avaliacao
+            ? {
+                id_avaliacao: avaliacao.id_avaliacao,
+                nr_nota: Number(avaliacao.nr_nota),
+                ds_comentario: avaliacao.ds_comentario,
+              }
+            : null,
+          is_assistido: Boolean(avaliacao),
+          dt_assistido: avaliacao ? avaliacao.created_at : null,
+        };
+      }),
     });
   } catch (err) {
     console.error('Erro ao buscar filmes da lista:', err.message);
@@ -262,53 +289,6 @@ const verFilmesDaLista = async (req, res) => {
   }
 };
 
-// ----------------------------------------
-// MARCAR / DESMARCAR FILME COMO ASSISTIDO (só o dono da lista)
-// PUT /listas/:id_lista/filmes/:id_filme/assistido   body: { is_assistido: true|false }
-// ----------------------------------------
-const marcarAssistido = async (req, res) => {
-  const { id_lista, id_filme } = req.params;
-  const { is_assistido } = req.body || {};
-  const id_usuario = req.usuario.id_usuario;
-
-  if (typeof is_assistido !== 'boolean') {
-    return res.status(400).json({ error: 'Informe se o filme foi assistido (true ou false).' });
-  }
-
-  try {
-    const [lista] = await pool.query(
-      'SELECT id_lista FROM TB_Lista WHERE id_lista = ? AND id_usuario = ?',
-      [id_lista, id_usuario]
-    );
-
-    if (lista.length === 0) {
-      return res.status(404).json({ error: 'Lista não encontrada.' });
-    }
-
-    const [vinculo] = await pool.query(
-      'SELECT id_filme FROM TB_Lista_Filme WHERE id_lista = ? AND id_filme = ?',
-      [id_lista, id_filme]
-    );
-
-    if (vinculo.length === 0) {
-      return res.status(404).json({ error: 'Esse filme não está na lista.' });
-    }
-
-    await pool.query(
-      `UPDATE TB_Lista_Filme
-       SET is_assistido = ?, dt_assistido = ${is_assistido ? 'NOW()' : 'NULL'}
-       WHERE id_lista = ? AND id_filme = ?`,
-      [is_assistido, id_lista, id_filme]
-    );
-
-    res.json({
-      message: is_assistido ? 'Filme marcado como assistido!' : 'Filme voltou para "para assistir".',
-    });
-  } catch (err) {
-    console.error('Erro ao marcar filme como assistido:', err.message);
-    res.status(500).json({ error: 'Erro ao atualizar o filme.' });
-  }
-};
 
 // ----------------------------------------
 // REMOVER FILME DA LISTA (só o dono da lista)
@@ -419,7 +399,6 @@ module.exports = {
   listarMinhasListas,
   adicionarFilme,
   verFilmesDaLista,
-  marcarAssistido,
   removerFilmeDaLista,
   editarLista,
   deletarLista,

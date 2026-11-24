@@ -1,7 +1,7 @@
 const pool = require('../config/database');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const { enviarCodigoNovoEmail } = require('../services/emailService');
+const { gerarToken } = require('../services/tokenService');
 
 // Aceita apenas data URL de imagem em base64 (o front sempre envia JPEG 256x256)
 const FORMATO_FOTO = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
@@ -23,20 +23,11 @@ function gerarCodigo() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-// Mesmo payload do authController (o frontend depende destes 3 campos no token).
-function gerarToken(usuario) {
-  return jwt.sign(
-    { id_usuario: usuario.id_usuario, nm_usuario: usuario.nm_usuario, ds_email: usuario.ds_email },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' }
-  );
-}
-
 // Busca o usuário SEM a foto (que é pesada) e sempre a partir do banco,
 // nunca do token, que pode estar desatualizado.
 async function buscarUsuario(id_usuario) {
   const [rows] = await pool.query(
-    `SELECT id_usuario, nm_usuario, ds_email, ds_senha,
+    `SELECT id_usuario, nm_usuario, ds_email, ds_senha, nr_versao_token,
             ds_email_pendente, cd_troca_email, dt_expiracao_troca_email
      FROM TB_Usuario WHERE id_usuario = ?`,
     [id_usuario]
@@ -245,7 +236,7 @@ const atualizarNome = async (req, res) => {
 // SENHA (usuário logado)
 // ----------------------------------------
 
-// PUT /usuarios/senha
+// PUT /usuarios/senha — derruba as sessões de todos os outros dispositivos
 const alterarSenha = async (req, res) => {
   const { senha_atual, nova_senha } = req.body || {};
 
@@ -277,11 +268,12 @@ const alterarSenha = async (req, res) => {
     const hash = await bcrypt.hash(nova_senha, 10);
 
     await pool.query(
-      'UPDATE TB_Usuario SET ds_senha = ? WHERE id_usuario = ?',
+      'UPDATE TB_Usuario SET ds_senha = ?, nr_versao_token = nr_versao_token + 1 WHERE id_usuario = ?',
       [hash, usuario.id_usuario]
     );
 
-    const token = gerarToken(usuario);
+    // token novo, da versão nova: este dispositivo continua logado, os outros caem
+    const token = gerarToken({ ...usuario, nr_versao_token: Number(usuario.nr_versao_token) + 1 });
     res.json({ message: 'Senha alterada com sucesso!', token });
   } catch (err) {
     console.error('Erro ao alterar senha:', err.message);
@@ -414,14 +406,20 @@ const confirmarTrocaEmail = async (req, res) => {
       [novoEmail, usuario.id_usuario]
     );
 
+    // nr_versao_token + 1: o email é a identidade da conta, então as outras sessões caem
     await pool.query(
       `UPDATE TB_Usuario
-       SET ds_email = ?, ds_email_pendente = NULL, cd_troca_email = NULL, dt_expiracao_troca_email = NULL
+       SET ds_email = ?, ds_email_pendente = NULL, cd_troca_email = NULL, dt_expiracao_troca_email = NULL,
+           nr_versao_token = nr_versao_token + 1
        WHERE id_usuario = ?`,
       [novoEmail, usuario.id_usuario]
     );
 
-    const token = gerarToken({ ...usuario, ds_email: novoEmail });
+    const token = gerarToken({
+      ...usuario,
+      ds_email: novoEmail,
+      nr_versao_token: Number(usuario.nr_versao_token) + 1,
+    });
     res.json({ message: 'Email alterado com sucesso!', token });
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') {
